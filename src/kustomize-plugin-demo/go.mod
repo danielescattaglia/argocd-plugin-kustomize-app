@@ -5,6 +5,7 @@ go 1.23.1
 require (
 	github.com/GoogleContainerTools/kpt-functions-sdk/go/fn v0.0.0-20230427202446-3255accc518d
 	github.com/getsops/sops/v3 v3.9.0
+	gopkg.in/yaml.v2 v2.4.0
 	sigs.k8s.io/kustomize/api v0.17.3
 	sigs.k8s.io/yaml v1.4.0
 )

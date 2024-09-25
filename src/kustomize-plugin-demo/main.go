@@ -5,6 +5,7 @@ import (
   "os"
   "fmt"
   "strings"
+  "gopkg.in/yaml.v2"
 
   "github.com/GoogleContainerTools/kpt-functions-sdk/go/fn"
   "sigs.k8s.io/kustomize/api/types"
@@ -19,25 +20,25 @@ import (
 )
 
 type kubernetesSecret struct {
-	APIVersion string            `json:"apiVersion" yaml:"apiVersion"`
-	Kind       string            `json:"kind" yaml:"kind"`
-	Metadata   types.ObjectMeta  `json:"metadata" yaml:"metadata"`
-	Type       string            `json:"type,omitempty" yaml:"type,omitempty"`
-	StringData map[string]string `json:"stringData,omitempty" yaml:"stringData,omitempty"`
-	Data       map[string]string `json:"data,omitempty" yaml:"data,omitempty"`
+	APIVersion string                   `json:"apiVersion" yaml:"apiVersion"`
+	Kind       string                   `json:"kind" yaml:"kind"`
+	Metadata   types.ObjectMeta         `json:"metadata" yaml:"metadata"`
+	Type       string                   `json:"type,omitempty" yaml:"type,omitempty"`
+	StringData map[string]string        `json:"stringData,omitempty" yaml:"stringData,omitempty"`
+	Data       map[string]string        `json:"data,omitempty" yaml:"data,omitempty"`
+	Sops       map[string]interface{}   `json:"sops,omitempty" yaml:"sops,omitempty"`
 }
 
 func help() {
 	msg := `
-		KSOPS is a flexible kustomize plugin for SOPS encrypted resources.
-		KSOPS supports both legacy and KRM style exec kustomize functions.
+		ESOPS is a flexible kustomize plugin for SOPS encrypted resources.
+		ESOPS supports KRM style exec kustomize functions.
 
 		kustomize Usage:
 		- kustomize build --enable-alpha-plugins --enable-exec
 
 		Standalone Usage :
-		- Legacy: ksops secret-generator.yaml
-		- KRM: cat secret-generator.yaml | ksops
+		- KRM: cat secret-generator.yaml | esops
 `
 	fmt.Fprintf(os.Stderr, "%s", strings.ReplaceAll(msg, "		", ""))
 	os.Exit(1)
@@ -48,15 +49,70 @@ func krm(rl *fn.ResourceList) (bool, error) {
     var modifiedItem []byte
 
     for _, manifest := range rl.Items {
+fmt.Println(manifest.String())        
         if string(manifest.GetKind()) == "Secret" {
-            decrypted, err := decryptContent(manifest.String())
+            // rimuove le annotations aggiunte da kustomize per poter decriptare
+
+            var m kubernetesSecret
+            err := yaml.Unmarshal([]byte(manifest.String()), &m)
+
             if err != nil {
-            	fmt.Fprintf(os.Stderr, "unable to generate manifests: %v", err)
-            	fmt.Fprintf(os.Stderr, "unable to generate manifests: %s", manifest.String())
+                fmt.Fprintf(os.Stderr, "Error unmarshaling")
+                return false, err
+            }
+
+            var savedAnnotations string
+            ometa := make(map[string]string)
+
+            for label, value := range m.Metadata.Annotations {
+                ometa[label] = value
+
+                if strings.HasPrefix(label, "config.kubernetes.io/") {
+                    savedAnnotations += label + ": " + value + "\n"
+                    delete (m.Metadata.Annotations, label)
+                } else if strings.HasPrefix(label, "internal.config.kubernetes.io/") {
+                    savedAnnotations += label + ": " + value + "\n"
+                    delete (m.Metadata.Annotations, label)
+                } else if strings.HasPrefix(label, "kustomize.config.k8s.io/") {
+                    savedAnnotations += label + ": " + value + "\n"
+                    delete (m.Metadata.Annotations, label)
+                } else if strings.HasPrefix(label, "config.k8s.io/") {
+                    savedAnnotations += label + ": " + value + "\n"
+                    delete (m.Metadata.Annotations, label)
+                }
+            }
+
+            currentManifest, err := yaml.Marshal(m)
+            if err != nil {
+                fmt.Fprintf(os.Stderr, "unable to generate manifests: %s", manifest.String())
+                return false, err
+            }
+            
+            // TODO: decrypt potrebbe andare in errore nel caso in cui siano state aggiunte annotations
+            // poi rimosse prima di dare in pasto al manifest a sops. Al momento sono rimosse prima
+            // solo quelle well-known ma se ne esistevano prima del filtro kustomize, sono rimosse
+            // e il mac del sops cambia.
+            decrypted, err := decryptContent(string(currentManifest))
+            
+            // terminata la decriptazione reinserisce le label
+            //x, _ := yaml.Marshal(ometa)
+            //fmt.Println(string(x))
+            var finalManifest kubernetesSecret
+
+            yaml.Unmarshal(decrypted, &finalManifest)
+            finalManifest.Metadata.Annotations = ometa
+
+            if err != nil {
+            	fmt.Fprintf(os.Stderr, "unable to generate manifests: %v", err)            	
+                //fmt.Fprintf(os.Stderr, "unable to generate manifests: %s", manifest.String())
             	return false, err
             }
 
-            modifiedItem = decrypted
+            modifiedItem, err = yaml.Marshal(finalManifest)
+            if err != nil {
+                fmt.Fprintf(os.Stderr, "unable to unmarshal final manifests: %v", err)
+                return false, err
+            }
         } else {
             fmt.Println("Unable to decrypt: " + string(manifest.GetKind()))
             modifiedItem  = []byte(manifest.String())

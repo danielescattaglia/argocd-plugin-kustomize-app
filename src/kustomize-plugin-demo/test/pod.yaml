@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  namespace: myapp
+  labels:
+    run: nginx
+  name: nginx
+  annotations:
+    pippo: pluto
+spec:
+  containers:
+    - image: nginx
+      name: nginx
+      volumeMounts:
+        - name: encrypted-secret
+          mountPath: "/mounted-secret"
+  dnsPolicy: ClusterFirst
+  restartPolicy: Always
+  volumes:
+    - name: encrypted-secret
+      secret:
+        secretName: encrypted-secret
