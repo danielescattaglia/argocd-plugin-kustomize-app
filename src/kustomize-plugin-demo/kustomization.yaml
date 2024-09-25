@@ -1,0 +1,5 @@
+resources:
+- pod.yaml
+- encrypted-secret.yaml
+transformers:
+- annotator.yaml
