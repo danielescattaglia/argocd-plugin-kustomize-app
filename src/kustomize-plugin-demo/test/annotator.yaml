@@ -1,0 +1,9 @@
+# $MYAPP/annotator.yaml
+apiVersion: transformers.example.co/v1
+kind: ValueAnnotator
+metadata:
+  name: notImportantHere
+  annotations:
+    config.kubernetes.io/function: |      
+      exec:
+        path: /home/ubuntu/.config/kustomize/plugin/esops

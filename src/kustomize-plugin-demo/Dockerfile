@@ -7,7 +7,7 @@ COPY . .
 RUN go build -ldflags '-w -s' -v -o /usr/local/bin/esops ./
 
 FROM alpine
-RUN apk add kustomize=5.3.0-r6
+RUN apk add kustomize=5.3.0-r6 
 COPY --from=builder /usr/local/bin/esops /usr/local/bin/esops
 RUN chmod +x /usr/local/bin/esops
 ENTRYPOINT ["esops"]

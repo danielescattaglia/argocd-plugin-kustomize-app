@@ -5,7 +5,7 @@ import (
   "os"
   "fmt"
   "strings"
-  "gopkg.in/yaml.v2"
+  _ "gopkg.in/yaml.v2"
 
   "github.com/GoogleContainerTools/kpt-functions-sdk/go/fn"
   "sigs.k8s.io/kustomize/api/types"
@@ -24,9 +24,9 @@ type kubernetesSecret struct {
 	Kind       string                   `json:"kind" yaml:"kind"`
 	Metadata   types.ObjectMeta         `json:"metadata" yaml:"metadata"`
 	Type       string                   `json:"type,omitempty" yaml:"type,omitempty"`
+    Data       map[string]string        `json:"data,omitempty" yaml:"data,omitempty"`	
 	StringData map[string]string        `json:"stringData,omitempty" yaml:"stringData,omitempty"`
-	Data       map[string]string        `json:"data,omitempty" yaml:"data,omitempty"`
-	Sops       map[string]interface{}   `json:"sops,omitempty" yaml:"sops,omitempty"`
+	Sops       *fn.SubObject   
 }
 
 func help() {
@@ -49,24 +49,31 @@ func krm(rl *fn.ResourceList) (bool, error) {
     var modifiedItem []byte
 
     for _, manifest := range rl.Items {
-fmt.Println(manifest.String())        
         if string(manifest.GetKind()) == "Secret" {
+            var m kubernetesSecret
+
+            m.Sops = manifest.GetMap("sops")
+            
+            if manifest.GetMap("stringData") != nil {
+                fmt.Fprintf(os.Stderr, "%s",manifest.GetMap("stringData").String())
+            } else {
+                fmt.Fprintf(os.Stderr, "%s", "pippo")                
+            }
             // rimuove le annotations aggiunte da kustomize per poter decriptare
 
+            /*
             var m kubernetesSecret
             err := yaml.Unmarshal([]byte(manifest.String()), &m)
-
             if err != nil {
                 fmt.Fprintf(os.Stderr, "Error unmarshaling")
                 return false, err
-            }
+            }            
 
             var savedAnnotations string
             ometa := make(map[string]string)
 
             for label, value := range m.Metadata.Annotations {
                 ometa[label] = value
-
                 if strings.HasPrefix(label, "config.kubernetes.io/") {
                     savedAnnotations += label + ": " + value + "\n"
                     delete (m.Metadata.Annotations, label)
@@ -80,39 +87,40 @@ fmt.Println(manifest.String())
                     savedAnnotations += label + ": " + value + "\n"
                     delete (m.Metadata.Annotations, label)
                 }
-            }
+            } 
 
             currentManifest, err := yaml.Marshal(m)
+
             if err != nil {
-                fmt.Fprintf(os.Stderr, "unable to generate manifests: %s", manifest.String())
+                fmt.Fprintf(os.Stderr, "unable to marshal manifest: %s", manifest.String())
                 return false, err
             }
-            
+            */
+
+            /*
             // TODO: decrypt potrebbe andare in errore nel caso in cui siano state aggiunte annotations
             // poi rimosse prima di dare in pasto al manifest a sops. Al momento sono rimosse prima
             // solo quelle well-known ma se ne esistevano prima del filtro kustomize, sono rimosse
-            // e il mac del sops cambia.
+            // e il mac del sops cambia.                                 
             decrypted, err := decryptContent(string(currentManifest))
+            if err != nil {
+            	fmt.Fprintf(os.Stderr, "unable to decrypt manifests: %v", err)
+            	return false, err
+            }
+
             
-            // terminata la decriptazione reinserisce le label
-            //x, _ := yaml.Marshal(ometa)
-            //fmt.Println(string(x))
+            // terminata la decriptazione reinserisce le label            
             var finalManifest kubernetesSecret
 
             yaml.Unmarshal(decrypted, &finalManifest)
             finalManifest.Metadata.Annotations = ometa
-
-            if err != nil {
-            	fmt.Fprintf(os.Stderr, "unable to generate manifests: %v", err)            	
-                //fmt.Fprintf(os.Stderr, "unable to generate manifests: %s", manifest.String())
-            	return false, err
-            }
-
+            
             modifiedItem, err = yaml.Marshal(finalManifest)
             if err != nil {
                 fmt.Fprintf(os.Stderr, "unable to unmarshal final manifests: %v", err)
                 return false, err
             }
+            */
         } else {
             fmt.Println("Unable to decrypt: " + string(manifest.GetKind()))
             modifiedItem  = []byte(manifest.String())
@@ -136,8 +144,7 @@ func decryptContent(content string) ([]byte, error) {
 
 	data, err := decryptBytes([]byte(content), format)
 
-    if err != nil {
-        fmt.Println(err)
+    if err != nil {        
         return nil, err
     }
 
@@ -146,7 +153,7 @@ func decryptContent(content string) ([]byte, error) {
 
 func decryptBytes(b []byte, f formats.Format) ([]byte, error) {
 	data, err := decrypt.DataWithFormat(b, f)
-
+    
 	if err != nil {
 		return nil, fmt.Errorf("trouble decrypting file: %w", err)
 	}
@@ -160,10 +167,10 @@ func main() {
 	if !(stat.Mode()&os.ModeCharDevice == 0) {
 		help()
 	}
+
 	err := fn.AsMain(fn.ResourceListProcessorFunc(krm))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "unable to generate manifests: %v", err)
+		fmt.Fprintf(os.Stderr, "unable to generate final manifests: %v", err)
 		os.Exit(1)
 	}
-	return
 }
