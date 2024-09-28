@@ -2,30 +2,28 @@
 package main
 
 import (
-  "os"
-  "fmt"
-  "strings"
-  _ "gopkg.in/yaml.v2"
+	"fmt"
+	"os"
+	"strings"
+	_ "gopkg.in/yaml.v2"
 
-  "github.com/GoogleContainerTools/kpt-functions-sdk/go/fn"
-  "sigs.k8s.io/kustomize/api/types"
-  _ "sigs.k8s.io/yaml"
-  "github.com/getsops/sops/v3/decrypt"
-  "github.com/getsops/sops/v3/cmd/sops/formats"
-
-  //"sigs.k8s.io/kustomize/kyaml/fn/framework"
-  //"sigs.k8s.io/kustomize/kyaml/fn/framework/command"
-  //"sigs.k8s.io/kustomize/kyaml/kio"
-  //"sigs.k8s.io/kustomize/kyaml/yaml"
+	"github.com/GoogleContainerTools/kpt-functions-sdk/go/fn"
+	"github.com/getsops/sops/v3/cmd/sops/formats"
+	"github.com/getsops/sops/v3/decrypt"
+	_ "sigs.k8s.io/yaml"
+	//"sigs.k8s.io/kustomize/kyaml/fn/framework"
+	//"sigs.k8s.io/kustomize/kyaml/fn/framework/command"
+	//"sigs.k8s.io/kustomize/kyaml/kio"
+	//"sigs.k8s.io/kustomize/kyaml/yaml"
 )
 
 type kubernetesSecret struct {
-	APIVersion string                   `json:"apiVersion" yaml:"apiVersion"`
-	Kind       string                   `json:"kind" yaml:"kind"`
-	Metadata   types.ObjectMeta         `json:"metadata" yaml:"metadata"`
-	Type       string                   `json:"type,omitempty" yaml:"type,omitempty"`
-    Data       map[string]string        `json:"data,omitempty" yaml:"data,omitempty"`	
-	StringData map[string]string        `json:"stringData,omitempty" yaml:"stringData,omitempty"`
+	APIVersion string                   
+	Kind       string                   
+	Metadata   *fn.SubObject     
+	Type       string                  
+    Data       *fn.SubObject     
+	StringData *fn.SubObject        
 	Sops       *fn.SubObject   
 }
 
@@ -50,77 +48,73 @@ func krm(rl *fn.ResourceList) (bool, error) {
 
     for _, manifest := range rl.Items {
         if string(manifest.GetKind()) == "Secret" {
-            var m kubernetesSecret
-
-            m.Sops = manifest.GetMap("sops")
+            var m kubernetesSecret            
             
+            m.APIVersion = manifest.GetAPIVersion()
+            m.Kind = manifest.GetKind()
+            m.Type = manifest.GetString("type")
+
+            if manifest.GetMap("data") != nil {
+                m.Data = manifest.GetMap("data")
+            }
+
             if manifest.GetMap("stringData") != nil {
-                fmt.Fprintf(os.Stderr, "%s",manifest.GetMap("stringData").String())
-            } else {
-                fmt.Fprintf(os.Stderr, "%s", "pippo")                
+                m.Data = manifest.GetMap("stringData")
             }
-            // rimuove le annotations aggiunte da kustomize per poter decriptare
 
-            /*
-            var m kubernetesSecret
-            err := yaml.Unmarshal([]byte(manifest.String()), &m)
-            if err != nil {
-                fmt.Fprintf(os.Stderr, "Error unmarshaling")
-                return false, err
-            }            
+            if manifest.GetMap("sops") != nil {
+                m.Sops = manifest.GetMap("sops")
+            }
+            
+            if manifest.GetMap("metadata") != nil {
+                m.Metadata = manifest.GetMap("metadata")
+            }
 
-            var savedAnnotations string
-            ometa := make(map[string]string)
+            krmAnnotations := make(map[string]string)
+            secretAnnotations := make(map[string]string)
 
-            for label, value := range m.Metadata.Annotations {
-                ometa[label] = value
-                if strings.HasPrefix(label, "config.kubernetes.io/") {
-                    savedAnnotations += label + ": " + value + "\n"
-                    delete (m.Metadata.Annotations, label)
-                } else if strings.HasPrefix(label, "internal.config.kubernetes.io/") {
-                    savedAnnotations += label + ": " + value + "\n"
-                    delete (m.Metadata.Annotations, label)
-                } else if strings.HasPrefix(label, "kustomize.config.k8s.io/") {
-                    savedAnnotations += label + ": " + value + "\n"
-                    delete (m.Metadata.Annotations, label)
-                } else if strings.HasPrefix(label, "config.k8s.io/") {
-                    savedAnnotations += label + ": " + value + "\n"
-                    delete (m.Metadata.Annotations, label)
+            for annotation, value := range manifest.GetAnnotations() {                
+                if strings.HasPrefix(annotation, "config.kubernetes.io/") {
+                    krmAnnotations[annotation] = value
+                } else if strings.HasPrefix(annotation, "internal.config.kubernetes.io/") {
+                    krmAnnotations[annotation] = value
+                } else if strings.HasPrefix(annotation, "kustomize.config.k8s.io/") {
+                    krmAnnotations[annotation] = value
+                } else if strings.HasPrefix(annotation, "config.k8s.io/") {
+                    krmAnnotations[annotation] = value
+                } else {
+                    secretAnnotations[annotation] = value
                 }
-            } 
-
-            currentManifest, err := yaml.Marshal(m)
-
-            if err != nil {
-                fmt.Fprintf(os.Stderr, "unable to marshal manifest: %s", manifest.String())
-                return false, err
             }
-            */
-
-            /*
+        
             // TODO: decrypt potrebbe andare in errore nel caso in cui siano state aggiunte annotations
             // poi rimosse prima di dare in pasto al manifest a sops. Al momento sono rimosse prima
             // solo quelle well-known ma se ne esistevano prima del filtro kustomize, sono rimosse
-            // e il mac del sops cambia.                                 
-            decrypted, err := decryptContent(string(currentManifest))
+            // e il mac del sops cambia. 
+
+            manifest.GetMap("metadata").RemoveNestedField("annotations")            
+            for k, v := range secretAnnotations {
+                manifest.SetAnnotation(k, v)
+            }
+                
+            decrypted , err := decryptContent(manifest.String())
             if err != nil {
             	fmt.Fprintf(os.Stderr, "unable to decrypt manifests: %v", err)
             	return false, err
             }
-
-            
+                                    
             // terminata la decriptazione reinserisce le label            
-            var finalManifest kubernetesSecret
-
-            yaml.Unmarshal(decrypted, &finalManifest)
-            finalManifest.Metadata.Annotations = ometa
-            
-            modifiedItem, err = yaml.Marshal(finalManifest)
+            finalManifest, err := fn.ParseKubeObject(decrypted)
             if err != nil {
-                fmt.Fprintf(os.Stderr, "unable to unmarshal final manifests: %v", err)
-                return false, err
+            	fmt.Fprintf(os.Stderr, "Error parsing manifests: %v", err)
+            	return false, err
             }
-            */
+
+            for k, v := range krmAnnotations {
+                finalManifest.SetAnnotation(k, v)
+            }
+
+            modifiedItem = []byte(finalManifest.String())
         } else {
             fmt.Println("Unable to decrypt: " + string(manifest.GetKind()))
             modifiedItem  = []byte(manifest.String())

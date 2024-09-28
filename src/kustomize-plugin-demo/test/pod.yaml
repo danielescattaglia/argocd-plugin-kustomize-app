@@ -19,4 +19,4 @@ spec:
   volumes:
     - name: encrypted-secret
       secret:
-        secretName: encrypted-secret
+        secretName: secret2
